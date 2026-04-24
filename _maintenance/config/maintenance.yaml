@@ -1,0 +1,40 @@
+# Vault Maintenance Configuration
+# Angepasst an Ivans FIS-Vault Schema
+
+# Pfade relativ zur Vault-Root
+vault_root: "."
+exclude_dirs:
+  - ".obsidian"
+  - ".trash"
+  - "_maintenance"
+  - "templates"
+  - ".git"
+
+# MOC/HUB-Erkennung (Dateiname enthält einen dieser Strings)
+moc_patterns:
+  - "MOC"
+  - "HUB"
+  - "Index"
+
+# Frontmatter-Typen die als MOC gelten (leer = deaktiviert)
+# Dein Vault nutzt kein 'type'-Feld, daher leer
+moc_frontmatter_types: []
+
+# Tag-Normalisierung (kanonische Form -> Aliase)
+# Erweitere diese Liste basierend auf erkannten Varianten
+tag_canonical:
+  networking: ["netzwerk", "network", "net"]
+  security: ["sec", "sicherheit", "infosec"]
+  python: ["py", "python3"]
+  linux: ["gnu-linux", "gnulinux"]
+
+# Schwellwerte
+orphan_min_age_days: 14       # Notizen erst nach 14 Tagen als Orphan markieren
+min_word_count_alert: 20      # Stubs kennzeichnen
+max_files_to_open_per_run: 25 # Claude-Budget-Schutz
+
+# Frontmatter-Pflichtfelder (angepasst an deutsches Schema)
+required_frontmatter:
+  - tags
+  - erstellt
+  - geändert
