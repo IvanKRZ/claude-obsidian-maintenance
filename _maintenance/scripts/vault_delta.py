@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+from atomic_io import write_atomic
+
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -62,9 +64,9 @@ def main():
             "unchanged_count": unchanged,
         }
 
-    DELTA_PATH.write_text(
+    write_atomic(
+        DELTA_PATH,
         json.dumps(delta, indent=2, ensure_ascii=False),
-        encoding='utf-8'
     )
     print(f"Delta: +{len(delta['added'])} ~{len(delta['modified'])} -{len(delta['deleted'])}")
 

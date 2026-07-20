@@ -1,0 +1,11 @@
+# Generierter Pipeline-State — nie committen (index.json wird schnell mehrere MB groß)
+_maintenance/state/*.json
+
+# Lokale Claude-Code-Einstellungen (maschinenspezifische Pfade, keine Repo-Inhalte).
+# .claude/commands/ bleibt bewusst versioniert — das ist der Workflow selbst.
+.claude/settings.json
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc

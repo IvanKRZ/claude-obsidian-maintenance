@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from datetime import datetime, date
 
+from atomic_io import write_atomic
+
 # UTF-8 Console (Windows)
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -32,10 +34,14 @@ class VaultJSONEncoder(json.JSONEncoder):
 
 # --- Regex Patterns ---
 INLINE_TAG_RE = re.compile(r'(?:^|\s)#([a-zA-Z0-9/_-]+)')
-WIKILINK_RE = re.compile(r'\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]+)?\]\]')
+# Nur [[...]] ohne vorangestelltem ! (kein Bild-Embed)
+WIKILINK_RE = re.compile(r'(?<!!)\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]+)?\]\]')
 MD_LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)]+\.md)\)')
-FRONTMATTER_RE = re.compile(r'\A---\s*\n(.*?)\n---\s*\n', re.DOTALL)
+FRONTMATTER_RE = re.compile(r'\A---\r?\n(.*?)\r?\n---[ \t]*\r?\n', re.DOTALL)
 HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+# Erkennt Code-Blöcke (``` ... ```) und Inline-Code (`...`) zum Herausfiltern
+CODE_BLOCK_RE = re.compile(r'```.*?```', re.DOTALL)
+INLINE_CODE_RE = re.compile(r'`[^`\n]+`')
 
 # --- Pfade ---
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -62,9 +68,18 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     return fm, text[match.end():]
 
 
+def get_fm_value(frontmatter: dict, key: str, default=None):
+    """Case-insensitiver Frontmatter-Lookup."""
+    key_lower = key.lower()
+    for k, v in frontmatter.items():
+        if k.lower() == key_lower:
+            return v
+    return default
+
+
 def extract_tags(frontmatter: dict, body: str) -> tuple[list[str], list[str]]:
     fm_tags = []
-    raw_tags = frontmatter.get('tags', [])
+    raw_tags = get_fm_value(frontmatter, 'tags', [])
     if isinstance(raw_tags, str):
         fm_tags = [t.strip() for t in re.split(r'[,\s]+', raw_tags) if t.strip()]
     elif isinstance(raw_tags, list):
@@ -74,10 +89,13 @@ def extract_tags(frontmatter: dict, body: str) -> tuple[list[str], list[str]]:
 
 
 def extract_links(body: str) -> list[str]:
-    wikilinks = [m.strip() for m in WIKILINK_RE.findall(body)]
+    # Code-Blöcke und Inline-Code entfernen, damit darin enthaltene [[Links]] nicht gezählt werden
+    clean = CODE_BLOCK_RE.sub('', body)
+    clean = INLINE_CODE_RE.sub('', clean)
+    wikilinks = [m.strip() for m in WIKILINK_RE.findall(clean)]
     md_links = [
         Path(link).stem
-        for _, link in MD_LINK_RE.findall(body)
+        for _, link in MD_LINK_RE.findall(clean)
         if not link.startswith(('http://', 'https://'))
     ]
     return list(set(wikilinks + md_links))
@@ -89,9 +107,11 @@ def extract_first_heading(body: str) -> str | None:
 
 
 def is_moc(path: Path, frontmatter: dict, config: dict) -> bool:
-    stem = path.stem.lower()
-    if any(pattern.lower() in stem for pattern in config['moc_patterns']):
-        return True
+    stem = path.stem
+    # Wortgrenzen-Match: Pattern muss als eigenständiges Wort im Stem vorkommen
+    for pattern in config['moc_patterns']:
+        if re.search(r'(?<![a-zA-Z])' + re.escape(pattern) + r'(?![a-zA-Z])', stem, re.IGNORECASE):
+            return True
     fm_type = str(frontmatter.get('type', '')).lower()
     moc_types = config.get('moc_frontmatter_types') or []
     if fm_type in [t.lower() for t in moc_types]:
@@ -99,19 +119,31 @@ def is_moc(path: Path, frontmatter: dict, config: dict) -> bool:
     return False
 
 
-def should_skip(path: Path, vault_root: Path, exclude_dirs: list[str]) -> bool:
+def should_skip(
+    path: Path, vault_root: Path, exclude_dirs: list[str], exclude_patterns: list[str]
+) -> bool:
     try:
-        rel_parts = path.relative_to(vault_root).parts
+        rel_path = path.relative_to(vault_root)
     except ValueError:
         return True
-    # Case-insensitiv (wichtig auf Windows)
+
+    rel_parts = rel_path.parts
+    rel_str = rel_path.as_posix().lower()
+
     exclude_lower = {d.lower() for d in exclude_dirs}
-    return any(part.lower() in exclude_lower for part in rel_parts)
+    if any(part.lower() in exclude_lower for part in rel_parts):
+        return True
+
+    patterns_lower = [p.lower() for p in exclude_patterns]
+    if any(pattern in rel_str for pattern in patterns_lower):
+        return True
+
+    return False
 
 
 def analyze_file(path: Path, vault_root: Path, config: dict) -> dict | None:
     try:
-        text = path.read_text(encoding='utf-8')
+        text = path.read_text(encoding='utf-8-sig')
     except UnicodeDecodeError:
         # Fallback für Legacy-Dateien mit anderem Encoding
         try:
@@ -126,13 +158,18 @@ def analyze_file(path: Path, vault_root: Path, config: dict) -> dict | None:
     links = extract_links(body)
     stat = path.stat()
 
+# Frontmatter mit normalisierten (lowercase) Keys für konsistente Prüfungen
+    normalized_fm = {
+        k.lower(): v for k, v in frontmatter.items() if not k.startswith('_')
+    }
     return {
         "path": path.relative_to(vault_root).as_posix(),  # Forward-Slashes
         "stem": path.stem,
         "mtime": stat.st_mtime,
         "size": stat.st_size,
         "hash": hashlib.sha256(text.encode('utf-8')).hexdigest()[:16],
-        "frontmatter": {k: v for k, v in frontmatter.items() if not k.startswith('_')},
+        "frontmatter": normalized_fm,
+        "frontmatter_original_keys": sorted(k for k in frontmatter.keys() if not k.startswith('_')),
         "frontmatter_parse_error": frontmatter.get('_parse_error', False),
         "fm_tags": fm_tags,
         "inline_tags": inline_tags,
@@ -167,11 +204,12 @@ def main():
     config = load_config()
     vault_root = (VAULT_ROOT / config['vault_root']).resolve()
     exclude_dirs = config.get('exclude_dirs', [])
+    exclude_patterns = config.get('exclude_path_patterns', [])
 
     print(f"Scanning vault: {vault_root}")
     notes = []
     for md_path in vault_root.rglob('*.md'):
-        if should_skip(md_path, vault_root, exclude_dirs):
+        if should_skip(md_path, vault_root, exclude_dirs, exclude_patterns):
             continue
         result = analyze_file(md_path, vault_root, config)
         if result:
@@ -188,10 +226,9 @@ def main():
         "notes": notes,
     }
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(
+    write_atomic(
+        OUTPUT_PATH,
         json.dumps(index, indent=2, ensure_ascii=False, cls=VaultJSONEncoder),
-        encoding='utf-8'
     )
     print(f"Indexed {len(notes)} notes ({index['moc_count']} MOCs) -> {OUTPUT_PATH}")
 

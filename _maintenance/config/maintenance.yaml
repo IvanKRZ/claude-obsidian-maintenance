@@ -1,40 +1,87 @@
 # Vault Maintenance Configuration
-# Angepasst an Ivans FIS-Vault Schema
+#
+# Diese Datei ist die einzige Stelle, an der du den Workflow an deinen Vault
+# anpasst. Die Skripte selbst sind vault-agnostisch.
 
-# Pfade relativ zur Vault-Root
+# Vault-Root relativ zum Ordner, der `_maintenance/` enthält
 vault_root: "."
+
+# Ordner, die komplett übersprungen werden (exakter Ordnername, case-insensitive)
 exclude_dirs:
   - ".obsidian"
   - ".trash"
-  - "_maintenance"
-  - "templates"
   - ".git"
+  - ".claude"
+  - "_maintenance"
+  - "node_modules"
 
-# MOC/HUB-Erkennung (Dateiname enthält einen dieser Strings)
+# Pfad-Muster (case-insensitive Substring-Match auf den relativen Pfad).
+# Nützlich für Ordner mit Nummern-Präfix wie "10. Templates/".
+exclude_path_patterns:
+  - "templates"
+  - "archive"
+
+# --- MOC-Erkennung -----------------------------------------------------------
+
+# Dateiname enthält eines dieser Wörter (Wortgrenzen-Match) -> gilt als MOC
 moc_patterns:
   - "MOC"
   - "HUB"
   - "Index"
 
-# Frontmatter-Typen die als MOC gelten (leer = deaktiviert)
-# Dein Vault nutzt kein 'type'-Feld, daher leer
+# Alternativ/zusätzlich: Frontmatter-Feld `type` mit einem dieser Werte.
+# Leere Liste = deaktiviert (für Vaults ohne `type`-Feld).
 moc_frontmatter_types: []
 
-# Tag-Normalisierung (kanonische Form -> Aliase)
-# Erweitere diese Liste basierend auf erkannten Varianten
-tag_canonical:
-  networking: ["netzwerk", "network", "net"]
-  security: ["sec", "sicherheit", "infosec"]
-  python: ["py", "python3"]
-  linux: ["gnu-linux", "gnulinux"]
+# --- Tag-Normalisierung ------------------------------------------------------
 
-# Schwellwerte
-orphan_min_age_days: 14       # Notizen erst nach 14 Tagen als Orphan markieren
-min_word_count_alert: 20      # Stubs kennzeichnen
-max_files_to_open_per_run: 25 # Claude-Budget-Schutz
+# Kanonische Form -> Aliase. Zwei Schreibweisen möglich:
+#   1. Liste (Claude fragt vor dem Anwenden nach):
+#        python: ["py", "python3"]
+#   2. Objekt mit Auto-Apply-Flag (Claude wendet ohne Rückfrage an):
+#        python: { aliases: ["py", "python3"], auto_apply: true }
+#
+# `auto_apply: true` nur bei eindeutigen Mappings setzen (reine Case- oder
+# Sprach-Normalisierung). Semantisch mehrdeutige Tags auf `false` lassen.
+tag_canonical: {}
+  # Beispiel:
+  # python:
+  #   aliases: ["py", "python3"]
+  #   auto_apply: true
+  # security:
+  #   aliases: ["sec", "infosec"]
+  #   auto_apply: false
 
-# Frontmatter-Pflichtfelder (angepasst an deutsches Schema)
+# --- Schwellwerte ------------------------------------------------------------
+
+orphan_min_age_days: 14         # Notizen erst nach N Tagen als Orphan melden
+min_word_count_alert: 20        # Notizen unter N Wörtern gelten als Stub
+max_files_to_open_per_run: 25   # Claude-Budget-Schutz pro Lauf
+moc_drift_min_tag_overlap: 2    # Kandidat braucht >= N gemeinsame Tags mit MOC
+moc_drift_max_candidates: 15    # Pro MOC max. so viele Kandidaten zeigen
+
+# --- Frontmatter -------------------------------------------------------------
+
+# Pflichtfelder, die jede Notiz haben soll. An dein Schema anpassen
+# (z.B. ["tags", "created", "updated"] oder ["tags", "erstellt", "geändert"]).
 required_frontmatter:
   - tags
-  - erstellt
-  - geändert
+
+# --- Broken-Link-Ausnahmen ---------------------------------------------------
+
+# Link-Ziele, die bewusst (noch) nicht existieren und nicht als Fehler zählen:
+# Platzhalter, geplante Vorwärtsreferenzen, Ziele in ausgeschlossenen Ordnern.
+broken_link_ignored_targets:
+  - "TODO"
+  - "WIP"
+
+# --- Quellen-Scan (optional) -------------------------------------------------
+
+# Prüft inhaltliche Notizen auf einen ausgefüllten Quellen-Abschnitt.
+# Reines Reporting — es wird nie automatisch etwas eingetragen.
+sources_scan:
+  enabled: false
+  heading: "Quellen"        # erwartete H2-Überschrift, z.B. "Quellen" oder "Sources"
+  # Nur diese Top-Level-Ordner scannen (Präfix-Match auf den Ordnernamen,
+  # z.B. ["02.", "03."]). Leere Liste = alle nicht ausgeschlossenen Ordner.
+  include_dir_prefixes: []
